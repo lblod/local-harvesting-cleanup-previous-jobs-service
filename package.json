@@ -1,0 +1,20 @@
+{
+  "name": "local-harvesting-cleaning-service",
+  "version": "0.1.0",
+  "description": "Microservice that cleanups old local harvesting jobs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lblod/local-harvesting-cleanup-previous-jobs-service.git"
+  },
+  "author": "redpencil.io",
+  "license": "MIT",
+  "dependencies": {
+    "@lblod/mu-auth-sudo": "^0.6.1",
+    "lodash.flatten": "^4.4.0",
+    "lodash.uniq": "^4.5.0",
+    "lodash.uniqwith": "^4.5.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}
