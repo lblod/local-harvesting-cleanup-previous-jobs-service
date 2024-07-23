@@ -1,4 +1,4 @@
-# harvesting-cleaning-service
+# local-harvesting-cleaning-service
 
 Microservice that cleans up previous successful jobs (keeps only the most recent successful one );
 It also periodically remove old failed jobs.
@@ -10,7 +10,7 @@ To add the service to your stack, add the following snippet to docker-compose.ym
 ```
 services:
   harvesting-cleaning:
-    image: lblod/harvesting-cleanup-previous-jobs-service
+    image: lblod/local-harvesting-cleanup-previous-jobs-service
     volumes:
       - ./data/files:/share
 ```
@@ -52,19 +52,3 @@ This service will filter out <http://redpencil.data.gift/vocabularies/tasks/Task
 - MAX_DAYS_TO_KEEP_BUSY_JOBS: (default: 7) number of days to keep busy jobs
 - MAX_DAYS_TO_KEEP_FAILED_JOBS: (default: 7) number of days to keep failed jobs
 - DEFAULT_GRAPH: (default: "http://mu.semte.ch/graphs/harvesting") the default graph where jobs triples are stored
-
-## REST API
-
-### POST /delta
-
-Starts the import of the given harvesting-tasks into the db
-
-- Returns `204 NO-CONTENT` if no harvesting-tasks could be extracted.
-
-- Returns `200 SUCCESS` if the harvesting-tasks where successfully processes.
-
-- Returns `500 INTERNAL SERVER ERROR` if something unexpected went wrong while processing the harvesting-tasks.
-
-## Model
-
-See [lblod/job-controller-service](https://github.com/lblod/job-controller-service)
