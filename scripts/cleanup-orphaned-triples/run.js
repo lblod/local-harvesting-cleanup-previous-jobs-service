@@ -54,6 +54,8 @@ const P = {
   hasHarvestingCollection: "http://redpencil.data.gift/vocabularies/tasks/hasHarvestingCollection",
   error:                   "http://redpencil.data.gift/vocabularies/tasks/error",
   dataSource:              "http://www.semanticdesktop.org/ontologies/2007/01/19/nie#dataSource",
+  nieUrl:                  "http://www.semanticdesktop.org/ontologies/2007/01/19/nie#url",
+  subject:                 "http://purl.org/dc/terms/subject",
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -129,26 +131,36 @@ const ORPHANED_TASK_FILTER = `
   GRAPH <${GRAPH}> { ?task a <${T.task}> ; <${P.isPartOf}> ?job }
   MINUS { GRAPH <${GRAPH}> { ?job a ?t . FILTER(?t IN (<${T.job}>, <${T.scheduledJob}>)) } }
 `;
+// Anchor on outgoing predicates rather than rdf:type — predicate indexes are far
+// more selective than a full type scan on a large graph.  Empty containers/collections/
+// RDOs with only a type triple are left behind and caught on the next run.
 const ORPHANED_CONTAINER_FILTER = `
-  GRAPH <${GRAPH}> { ?container a <${T.dataContainer}> }
+  GRAPH <${GRAPH}> {
+    { ?container <${P.hasFile}> ?file }
+    UNION
+    { ?container <${P.hasHarvestingCollection}> ?collection }
+  }
   MINUS { GRAPH <${GRAPH}> { ?task <${P.resultsContainer}> ?container } }
   MINUS { GRAPH <${GRAPH}> { ?task <${P.inputContainer}> ?container } }
 `;
 const ORPHANED_COLLECTION_FILTER = `
-  GRAPH <${GRAPH}> { ?collection a <${T.harvestingCollection}> }
+  GRAPH <${GRAPH}> { ?collection <${P.hasPart}> ?rdo }
   MINUS { GRAPH <${GRAPH}> { ?container <${P.hasHarvestingCollection}> ?collection } }
 `;
 const ORPHANED_RDO_FILTER = `
-  GRAPH <${GRAPH}> { ?rdo a <${T.remoteDataObject}> }
+  GRAPH <${GRAPH}> { ?rdo <${P.nieUrl}> ?url }
   MINUS { GRAPH <${GRAPH}> { ?collection <${P.hasPart}> ?rdo } }
 `;
 // Only target virtual files — those that a physical disk file points to via
 // nie:dataSource. Physical files themselves are never the target of task:hasFile
 // so a naive "no container" check would incorrectly flag every physical file
 // on disk as orphaned.
+// Also exclude files referenced via dct:subject (e.g. delta producer graph dumps
+// stored as dcat:Distribution → dct:subject → nfo:FileDataObject in this same graph).
 const ORPHANED_FILE_FILTER = `
   GRAPH <${GRAPH}> { ?diskFile <${P.dataSource}> ?file }
   MINUS { GRAPH <${GRAPH}> { ?container <${P.hasFile}> ?file } }
+  MINUS { GRAPH <${GRAPH}> { ?distribution <${P.subject}> ?file } }
 `;
 const ORPHANED_ERROR_FILTER = `
   GRAPH <${GRAPH}> { ?error a <${T.error}> }
@@ -278,17 +290,38 @@ async function cleanOrphanedTasks() {
 }
 
 async function cleanOrphanedContainers() {
+  // Use server-side DELETE with an inner subquery LIMIT instead of SELECT + client loop.
+  // This way the client only sends an UPDATE and receives a tiny HTTP 200 — no large
+  // result set travels over the network, so the fetch timeout is irrelevant.
   console.log("\n=== Step 2: Orphaned data containers ===");
-  const q = `SELECT DISTINCT ?container WHERE { ${ORPHANED_CONTAINER_FILTER} }`;
+  const batchFilter = `{ SELECT DISTINCT ?container WHERE { ${ORPHANED_CONTAINER_FILTER} } LIMIT ${BATCH_SIZE} }`;
   let total = 0;
   while (true) {
-    const containers = await fetchOrphanedBatch(q, "container");
-    if (!containers.length) break;
-    await cleanContainerBatch(containers);
-    total += containers.length;
-    console.log(`  removed ${total} containers so far...`);
+    const exists = await query(`ASK { ${ORPHANED_CONTAINER_FILTER} }`);
+    if (!exists.boolean) break;
+
+    await update(`
+      DELETE { GRAPH <${GRAPH}> { ?rdo ?p ?o } }
+      WHERE { ${batchFilter} GRAPH <${GRAPH}> {
+        ?container <${P.hasHarvestingCollection}> ?collection .
+        ?collection <${P.hasPart}> ?rdo . ?rdo ?p ?o .
+      } }
+    `);
+    await update(`
+      DELETE { GRAPH <${GRAPH}> { ?collection ?p ?o } }
+      WHERE { ${batchFilter} GRAPH <${GRAPH}> {
+        ?container <${P.hasHarvestingCollection}> ?collection . ?collection ?p ?o .
+      } }
+    `);
+    await update(`
+      DELETE { GRAPH <${GRAPH}> { ?container ?p ?o } }
+      WHERE { ${batchFilter} GRAPH <${GRAPH}> { ?container ?p ?o . } }
+    `);
+
+    total += BATCH_SIZE;
+    console.log(`  removed ~${total} containers so far...`);
   }
-  console.log(`  done — ${total} orphaned containers removed`);
+  console.log(`  done — ~${total} orphaned containers removed`);
 }
 
 async function cleanOrphanedHarvestingCollections() {
