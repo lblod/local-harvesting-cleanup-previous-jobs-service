@@ -200,54 +200,48 @@ async function deletePhysicalFile(uri) {
   }
 }
 
-async function cleanFilesForContainerBatch(containerValues) {
-  const result = await query(`
-    SELECT ?file ?fileOnDisk WHERE {
-      GRAPH <${GRAPH}> {
-        VALUES ?container { ${containerValues} }
-        ?container <${P.hasFile}> ?file .
-        OPTIONAL { ?fileOnDisk <${P.dataSource}> ?file }
-      }
-    }
-  `);
-
-  const fileUris = [], diskUris = [];
-  for (const row of (result.results && result.results.bindings || [])) {
-    fileUris.push(row.file.value);
-    if (row.fileOnDisk) {
-      diskUris.push(row.fileOnDisk.value);
-      await deletePhysicalFile(row.fileOnDisk.value);
-    }
-  }
-  await batchDeleteSubjects(diskUris);
-  await batchDeleteSubjects(fileUris);
-}
-
-async function cleanCollectionsForContainerBatch(containerValues) {
-  const result = await query(`
-    SELECT ?collection ?rdo WHERE {
-      GRAPH <${GRAPH}> {
-        VALUES ?container { ${containerValues} }
-        ?container <${P.hasHarvestingCollection}> ?collection .
-        OPTIONAL { ?collection <${P.hasPart}> ?rdo }
-      }
-    }
-  `);
-
-  const collectionUris = [], rdoUris = [];
-  for (const row of (result.results && result.results.bindings || [])) {
-    collectionUris.push(row.collection.value);
-    if (row.rdo) rdoUris.push(row.rdo.value);
-  }
-  await batchDeleteSubjects(rdoUris);
-  await batchDeleteSubjects([...new Set(collectionUris)]);
-}
-
 async function cleanContainerBatch(containerUris) {
+  // Files are intentionally NOT deleted here. Removing the container subject
+  // (and its task:hasFile triples) orphans the files, and step 5 picks them
+  // up in its own batched loop — avoiding unbounded SELECTs for file counts
+  // that could be millions.
   const values = containerUris.map((u) => `<${u}>`).join(" ");
-  await cleanFilesForContainerBatch(values);
-  await cleanCollectionsForContainerBatch(values);
-  await batchDeleteSubjects(containerUris);
+
+  // Delete RDOs inside harvesting collections (server-side join)
+  await update(`
+    DELETE { GRAPH <${GRAPH}> { ?rdo ?p ?o } }
+    WHERE {
+      GRAPH <${GRAPH}> {
+        VALUES ?container { ${values} }
+        ?container <${P.hasHarvestingCollection}> ?collection .
+        ?collection <${P.hasPart}> ?rdo .
+        ?rdo ?p ?o .
+      }
+    }
+  `);
+
+  // Delete collections
+  await update(`
+    DELETE { GRAPH <${GRAPH}> { ?collection ?p ?o } }
+    WHERE {
+      GRAPH <${GRAPH}> {
+        VALUES ?container { ${values} }
+        ?container <${P.hasHarvestingCollection}> ?collection .
+        ?collection ?p ?o .
+      }
+    }
+  `);
+
+  // Delete containers (removes task:hasFile links, orphaning the files for step 5)
+  await update(`
+    DELETE { GRAPH <${GRAPH}> { ?container ?p ?o } }
+    WHERE {
+      GRAPH <${GRAPH}> {
+        VALUES ?container { ${values} }
+        ?container ?p ?o .
+      }
+    }
+  `);
 }
 
 // ── Cleanup steps ─────────────────────────────────────────────────────────────
@@ -305,12 +299,17 @@ async function cleanOrphanedHarvestingCollections() {
     const collections = await fetchOrphanedBatch(q, "collection");
     if (!collections.length) break;
     const values = collections.map((u) => `<${u}>`).join(" ");
-    const rdos = urisFromResult(await query(`
-      SELECT DISTINCT ?rdo WHERE {
-        GRAPH <${GRAPH}> { VALUES ?c { ${values} } ?c <${P.hasPart}> ?rdo }
+    // Delete RDOs server-side — avoids pulling potentially large result sets
+    await update(`
+      DELETE { GRAPH <${GRAPH}> { ?rdo ?p ?o } }
+      WHERE {
+        GRAPH <${GRAPH}> {
+          VALUES ?c { ${values} }
+          ?c <${P.hasPart}> ?rdo .
+          ?rdo ?p ?o .
+        }
       }
-    `), "rdo");
-    await batchDeleteSubjects(rdos);
+    `);
     await batchDeleteSubjects(collections);
     total += collections.length;
     console.log(`  removed ${total} collections so far...`);
