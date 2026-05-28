@@ -31,7 +31,7 @@ const { unlink } = require("fs/promises");
 const ENDPOINT =
   process.env.MU_APPLICATION_SPARQL_ENDPOINT ||
   process.env.HIGH_LOAD_DATABASE_ENDPOINT ||
-  "http://database:8890/sparql";
+  "http://virtuoso:8890/sparql";
 const GRAPH =
   process.env.DEFAULT_GRAPH || "http://mu.semte.ch/graphs/harvesting";
 const BATCH_SIZE = parseInt(process.env.BATCH_SIZE) || 200;
