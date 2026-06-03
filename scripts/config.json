@@ -1,0 +1,17 @@
+{
+  "version": "0.2",
+  "scripts": [
+    {
+      "documentation": {
+        "command": "cleanup-orphaned-triples",
+        "description": "Removes orphaned metadata (tasks, containers, harvesting collections, remote data objects, files, errors) left behind by incomplete job cleanups. Accepts --dry-run to preview without deleting.",
+        "arguments": []
+      },
+      "environment": {
+        "interactive": false,
+        "script": "cleanup-orphaned-triples/run.sh",
+        "join_networks": true
+      }
+    }
+  ]
+}
