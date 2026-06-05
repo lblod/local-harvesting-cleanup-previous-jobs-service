@@ -20,7 +20,7 @@ app.get("/", function(_, res) {
   res.send("Hello harvesting-cleaning-service");
 });
 
-app.post("/delta", async function(req, res, next) {
+app.post("/delta", bodyParser.json({ limit: '50mb' }), function(req, res, next) {
   try {
     const entries = new Delta(req.body).getInsertsFor(
       "http://www.w3.org/ns/adms#status",
